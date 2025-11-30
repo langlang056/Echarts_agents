@@ -84,8 +84,8 @@ def initialize_agents(model_type: str, api_key: str, model_name: str = None):
                 model_type=model_type,
                 api_key=api_key,
                 model_name=model_name,
-                temperature=0.7,
-                max_iters=10
+                temperature=0.3,  # 更专注于执行任务
+                max_iters=15  # 确保有足够的步骤完成工作流
             )
 
             # Create Business Analyst Agent
@@ -124,16 +124,17 @@ async def run_analysis_pipeline(user_question: str, file_path: str) -> dict:
 
         engineer_msg = Msg(
             name="user",
-            content=f"""数据文件路径: {file_path}
+            content=f"""任务：为以下问题生成可视化
 
-用户问题: {user_question}
+数据文件：{file_path}
+用户问题：{user_question}
 
-请按照以下步骤完成任务:
-1. 使用 read_data_schema 工具了解数据结构
-2. 根据用户需求编写 Python 代码处理数据并生成 Pyecharts 可视化
-3. 保存图表为 ./temp/visual_result.html
-4. 使用 print() 输出关键统计指标
-5. 使用 validate_html_output 验证文件生成成功
+执行步骤（立即执行，不要解释）：
+1. read_data_schema - 读取数据结构
+2. execute_python_safe - 生成图表并保存到 ./temp/visual_result.html
+3. validate_html_output - 验证文件
+
+现在开始执行！
 """,
             role="user"
         )

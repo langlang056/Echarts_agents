@@ -36,6 +36,7 @@ ENV/
 
 # Environment variables
 .env
+.claude/
 
 # Temporary files
 temp/

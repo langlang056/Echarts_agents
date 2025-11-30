@@ -13,7 +13,7 @@ import re
 import sys
 import io
 import traceback
-from typing import Any
+from typing import Any, List
 import pandas as pd
 from agentscope.tool import ToolResponse
 
@@ -41,9 +41,9 @@ def read_data_schema(file_path: str) -> ToolResponse:
     try:
         # Validate file exists
         if not os.path.exists(file_path):
+            error_msg = f"Error: File not found at path: {file_path}"
             return ToolResponse(
-                content=f"Error: File not found at path: {file_path}",
-                is_success=False,
+                content=[{"type": "text", "text": error_msg}],
                 metadata={"error_type": "FileNotFoundError"}
             )
 
@@ -57,9 +57,9 @@ def read_data_schema(file_path: str) -> ToolResponse:
             df = pd.read_excel(file_path, nrows=5)
             full_df = pd.read_excel(file_path)
         else:
+            error_msg = f"Error: Unsupported file format: {file_ext}. Only .csv, .xlsx, .xls are supported."
             return ToolResponse(
-                content=f"Error: Unsupported file format: {file_ext}. Only .csv, .xlsx, .xls are supported.",
-                is_success=False,
+                content=[{"type": "text", "text": error_msg}],
                 metadata={"error_type": "UnsupportedFileFormat"}
             )
 
@@ -81,26 +81,25 @@ def read_data_schema(file_path: str) -> ToolResponse:
         }
 
         # Format as readable JSON
-        content = json.dumps(schema_info, ensure_ascii=False, indent=2)
+        content_text = json.dumps(schema_info, ensure_ascii=False, indent=2)
+        success_msg = f"Successfully read data schema:\n{content_text}"
 
         return ToolResponse(
-            content=f"Successfully read data schema:\n{content}",
-            is_success=True,
+            content=[{"type": "text", "text": success_msg}],
             metadata=schema_info
         )
 
     except pd.errors.EmptyDataError:
+        error_msg = "Error: The file is empty or has no data."
         return ToolResponse(
-            content="Error: The file is empty or has no data.",
-            is_success=False,
+            content=[{"type": "text", "text": error_msg}],
             metadata={"error_type": "EmptyDataError"}
         )
 
     except Exception as e:
         error_msg = f"Error reading file: {str(e)}\n{traceback.format_exc()}"
         return ToolResponse(
-            content=error_msg,
-            is_success=False,
+            content=[{"type": "text", "text": error_msg}],
             metadata={
                 "error_type": type(e).__name__,
                 "file_path": file_path
@@ -150,10 +149,10 @@ def execute_python_safe(code: str, working_dir: str = "./temp") -> ToolResponse:
 
         for pattern, name in dangerous_patterns:
             if re.search(pattern, code):
+                error_msg = (f"Security Error: Dangerous operation detected: {name}\n"
+                           f"This operation is blocked for security reasons.")
                 return ToolResponse(
-                    content=f"Security Error: Dangerous operation detected: {name}\n"
-                           f"This operation is blocked for security reasons.",
-                    is_success=False,
+                    content=[{"type": "text", "text": error_msg}],
                     metadata={"error_type": "SecurityError", "blocked_operation": name}
                 )
 
@@ -179,6 +178,7 @@ def execute_python_safe(code: str, working_dir: str = "./temp") -> ToolResponse:
             're': re,
             # Built-ins (restricted)
             '__builtins__': {
+                '__import__': __import__,  # 必需! 用于 import 语句
                 'print': print,
                 'len': len,
                 'range': range,
@@ -203,6 +203,9 @@ def execute_python_safe(code: str, working_dir: str = "./temp") -> ToolResponse:
                 'type': type,
                 'isinstance': isinstance,
                 'open': open,  # Needed for file I/O
+                'hasattr': hasattr,
+                'getattr': getattr,
+                'setattr': setattr,
             }
         }
 
@@ -236,8 +239,7 @@ def execute_python_safe(code: str, working_dir: str = "./temp") -> ToolResponse:
                 exec_globals['Page'] = Page
             except ImportError:
                 return ToolResponse(
-                    content="Error: pyecharts is not installed. Please install it first:\npip install pyecharts",
-                    is_success=False,
+                    content=[{"type": "text", "text": "Error: pyecharts is not installed. Please install it first:\npip install pyecharts"}],
                     metadata={"error_type": "ImportError"}
                 )
 
@@ -249,8 +251,7 @@ def execute_python_safe(code: str, working_dir: str = "./temp") -> ToolResponse:
                 exec_globals['numpy'] = np
             except ImportError:
                 return ToolResponse(
-                    content="Error: numpy is not installed. Please install it first:\npip install numpy",
-                    is_success=False,
+                    content=[{"type": "text", "text": "Error: numpy is not installed. Please install it first:\npip install numpy"}],
                     metadata={"error_type": "ImportError"}
                 )
 
@@ -285,8 +286,7 @@ def execute_python_safe(code: str, working_dir: str = "./temp") -> ToolResponse:
             full_output = "\n\n".join(output_parts)
 
             return ToolResponse(
-                content=full_output,
-                is_success=True,
+                content=[{"type": "text", "text": full_output}],
                 metadata={
                     "stdout": stdout_content,
                     "stderr": stderr_content,
@@ -314,8 +314,7 @@ def execute_python_safe(code: str, working_dir: str = "./temp") -> ToolResponse:
                 error_msg += f"\n=== Stderr ===\n{stderr_content}"
 
             return ToolResponse(
-                content=error_msg,
-                is_success=False,
+                content=[{"type": "text", "text": error_msg}],
                 metadata={
                     "error_type": type(e).__name__,
                     "stdout": stdout_content,
@@ -356,9 +355,8 @@ def validate_html_output(
         # Check if file exists
         if not os.path.exists(file_path):
             return ToolResponse(
-                content=f"Validation Failed: File not found at {file_path}\n"
-                       f"Please ensure your code saves the chart using .render('{file_path}')",
-                is_success=False,
+                content=[{"type": "text", "text": f"Validation Failed: File not found at {file_path}\n"
+                       f"Please ensure your code saves the chart using .render('{file_path}')"}],
                 metadata={"error_type": "FileNotFound", "expected_path": file_path}
             )
 
@@ -368,9 +366,8 @@ def validate_html_output(
 
         if file_size_kb < min_size_kb:
             return ToolResponse(
-                content=f"Validation Failed: File is too small ({file_size_kb:.2f} KB)\n"
-                       f"Expected at least {min_size_kb} KB. The file may be empty or incomplete.",
-                is_success=False,
+                content=[{"type": "text", "text": f"Validation Failed: File is too small ({file_size_kb:.2f} KB)\n"
+                       f"Expected at least {min_size_kb} KB. The file may be empty or incomplete."}],
                 metadata={
                     "error_type": "FileTooSmall",
                     "size_kb": file_size_kb,
@@ -388,10 +385,9 @@ def validate_html_output(
 
         if not has_html:
             return ToolResponse(
-                content=f"Validation Warning: File exists but doesn't contain valid HTML structure.\n"
+                content=[{"type": "text", "text": f"Validation Warning: File exists but doesn't contain valid HTML structure.\n"
                        f"Size: {file_size_kb:.2f} KB\n"
-                       f"This may not be a valid visualization file.",
-                is_success=False,
+                       f"This may not be a valid visualization file."}],
                 metadata={
                     "error_type": "InvalidHTML",
                     "size_kb": file_size_kb
@@ -406,8 +402,7 @@ def validate_html_output(
         validation_msg += f"ECharts Content: {'✓' if has_echarts else '✗'}\n"
 
         return ToolResponse(
-            content=validation_msg,
-            is_success=True,
+            content=[{"type": "text", "text": validation_msg}],
             metadata={
                 "file_path": file_path,
                 "size_kb": file_size_kb,
@@ -418,8 +413,7 @@ def validate_html_output(
 
     except Exception as e:
         return ToolResponse(
-            content=f"Validation Error: {str(e)}\n{traceback.format_exc()}",
-            is_success=False,
+            content=[{"type": "text", "text": f"Validation Error: {str(e)}\n{traceback.format_exc()}"}],
             metadata={"error_type": type(e).__name__}
         )
 
