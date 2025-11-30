@@ -1,0 +1,21 @@
+# Core dependencies
+agentscope>=0.1.0
+streamlit>=1.30.0
+pandas>=2.0.0
+pyecharts>=2.0.0
+
+# Data processing
+numpy>=1.24.0
+openpyxl>=3.1.0  # For Excel support
+
+# LLM providers (install based on your choice)
+dashscope==1.20.0  # For DashScope/Qwen models (固定版本，兼容 AgentScope 1.0.8)
+openai>=1.0.0      # For OpenAI models
+
+# Optional: For async support
+aiohttp>=3.9.0
+
+# Development and testing (optional)
+pytest>=7.4.0
+black>=23.0.0
+flake8>=6.1.0
