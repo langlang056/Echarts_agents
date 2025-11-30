@@ -15,7 +15,12 @@ from pathlib import Path
 from datetime import datetime
 
 from agentscope.message import Msg
-from agents import create_data_engineer_agent, create_business_analyst_agent
+from agents import (
+    create_data_engineer_agent,
+    create_business_analyst_agent,
+    create_router_agent,
+    create_general_agent
+)
 
 
 # Page configuration
@@ -29,27 +34,119 @@ st.set_page_config(
 # Custom CSS
 st.markdown("""
 <style>
+    /* GitHub Dark Mode Theme */
+    
+    /* Global Background & Text */
+    .stApp {
+        background-color: #0d1117;
+        color: #c9d1d9;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+    }
+    
+    /* Headings */
+    h1, h2, h3, h4, h5, h6, .main-header {
+        color: #c9d1d9 !important;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    }
+    
     .main-header {
         font-size: 2.5rem;
-        font-weight: bold;
-        color: #1f77b4;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
         text-align: center;
-        margin-bottom: 1rem;
     }
+    
     .sub-header {
-        font-size: 1.2rem;
-        color: #666;
-        text-align: center;
+        font-size: 1.1rem;
+        color: #8b949e !important;
         margin-bottom: 2rem;
+        text-align: center;
     }
+
+    /* Sidebar */
+    section[data-testid="stSidebar"] {
+        background-color: #161b22;
+        border-right: 1px solid #30363d;
+    }
+    
+    /* Inputs (Text Input, Selectbox, etc) */
+    .stTextInput input, .stSelectbox div[data-baseweb="select"] {
+        background-color: #0d1117;
+        color: #c9d1d9;
+        border: 1px solid #30363d;
+        border-radius: 6px;
+    }
+    
+    /* Buttons (GitHub Green) */
+    .stButton button {
+        background-color: #238636;
+        color: #ffffff;
+        border: 1px solid rgba(240, 246, 252, 0.1);
+        border-radius: 6px;
+        font-weight: 600;
+        transition: 0.2s;
+    }
+    .stButton button:hover {
+        background-color: #2ea043;
+        border-color: rgba(240, 246, 252, 0.1);
+        color: #ffffff;
+    }
+    
+    /* Analysis Box (Card Style) */
     .analysis-box {
-        background-color: #f0f8ff;
+        background-color: #161b22;
+        border: 1px solid #30363d;
+        border-radius: 6px;
         padding: 1.5rem;
-        border-radius: 10px;
-        border-left: 5px solid #1f77b4;
+        color: #c9d1d9;
     }
-    .stAlert {
-        margin-top: 1rem;
+    
+    /* Code Blocks */
+    code {
+        background-color: #161b22 !important;
+        color: #c9d1d9 !important;
+        border-radius: 6px;
+        border: 1px solid #30363d;
+    }
+    
+    /* Links */
+    a {
+        color: #58a6ff !important;
+        text-decoration: none;
+    }
+    a:hover {
+        text-decoration: underline;
+    }
+    
+    /* Chat Messages */
+    .stChatMessage {
+        background-color: transparent;
+    }
+    div[data-testid="stChatMessageContent"] {
+        background-color: #161b22;
+        border: 1px solid #30363d;
+        color: #c9d1d9;
+        border-radius: 6px;
+    }
+    
+    /* File Uploader */
+    section[data-testid="stFileUploader"] {
+        background-color: #161b22;
+        border: 1px dashed #30363d;
+        border-radius: 6px;
+    }
+    
+    /* Expander */
+    .streamlit-expanderHeader {
+        background-color: #161b22;
+        color: #c9d1d9;
+        border: 1px solid #30363d;
+        border-radius: 6px;
+    }
+    
+    /* Divider */
+    hr {
+        border-color: #30363d;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -65,12 +162,16 @@ def initialize_session_state():
         st.session_state.data_engineer = None
     if 'business_analyst' not in st.session_state:
         st.session_state.business_analyst = None
+    if 'router_agent' not in st.session_state:
+        st.session_state.router_agent = None
+    if 'general_agent' not in st.session_state:
+        st.session_state.general_agent = None
     if 'agents_initialized' not in st.session_state:
         st.session_state.agents_initialized = False
 
 
 def initialize_agents(model_type: str, api_key: str, model_name: str = None):
-    """Initialize the two agents with given configuration.
+    """Initialize all agents with given configuration.
 
     Args:
         model_type (str): "dashscope" or "openai"
@@ -79,13 +180,29 @@ def initialize_agents(model_type: str, api_key: str, model_name: str = None):
     """
     try:
         with st.spinner("🤖 正在初始化 AI 智能体..."):
+            # Create Router Agent (cheaper model)
+            st.session_state.router_agent = create_router_agent(
+                model_type=model_type,
+                api_key=api_key,
+                model_name="qwen-turbo" if model_type == "dashscope" else "gpt-3.5-turbo",
+                temperature=0.1
+            )
+
+            # Create General Agent (mid-tier model)
+            st.session_state.general_agent = create_general_agent(
+                model_type=model_type,
+                api_key=api_key,
+                model_name="qwen-plus" if model_type == "dashscope" else "gpt-3.5-turbo",
+                temperature=0.3
+            )
+
             # Create Data Engineer Agent
             st.session_state.data_engineer = create_data_engineer_agent(
                 model_type=model_type,
                 api_key=api_key,
                 model_name=model_name,
-                temperature=0.3,  # 更专注于执行任务
-                max_iters=15  # 确保有足够的步骤完成工作流
+                temperature=0.3,
+                max_iters=15
             )
 
             # Create Business Analyst Agent
@@ -105,26 +222,126 @@ def initialize_agents(model_type: str, api_key: str, model_name: str = None):
         raise
 
 
+def extract_agent_content(agent_response) -> str:
+    """Extract and clean content from agent response.
+    
+    Args:
+        agent_response: Agent response object with content attribute
+        
+    Returns:
+        str: Cleaned content string
+    """
+    content = agent_response.content
+    
+    # Handle list format (AgentScope format)
+    if isinstance(content, list):
+        content = '\n'.join(
+            item.get('text', str(item)) if isinstance(item, dict) else str(item)
+            for item in content
+        )
+    elif not isinstance(content, str):
+        content = str(content)
+    
+    # Remove markdown code blocks if present
+    content = content.strip()
+    
+    # Remove ```markdown wrapper
+    if content.startswith('```markdown'):
+        content = content[len('```markdown'):].strip()
+    
+    # Remove generic ``` wrapper
+    if content.startswith('```'):
+        content = content[3:].strip()
+    if content.endswith('```'):
+        content = content[:-3].strip()
+    
+    return content
+
+
 async def run_analysis_pipeline(user_question: str, file_path: str) -> dict:
-    """Run the two-agent analysis pipeline.
+    """Run the intelligent routing pipeline.
 
     Args:
         user_question (str): User's question about the data
         file_path (str): Path to the uploaded data file
 
     Returns:
-        dict: Contains 'analysis' (str), 'engineer_log' (str), and 'success' (bool)
+        dict: Contains 'analysis' (str), 'route' (str), 'engineer_log' (str), 
+              'has_visualization' (bool), and 'success' (bool)
     """
     try:
+        import json
+        import re
+        
         # Ensure temp directory exists
         os.makedirs("./temp", exist_ok=True)
 
-        # Step 1: Data Engineer Agent processes data and creates visualization
-        st.info("🔧 数据工程师正在处理数据...")
+        # Step 1: Router Agent decides the route
+        st.info("🧭 正在分析问题类型...")
 
-        engineer_msg = Msg(
+        router_msg = Msg(
             name="user",
-            content=f"""任务：为以下问题生成可视化
+            content=f"""用户问题: {user_question}
+
+数据文件路径: {file_path}
+
+请判断这个问题是否需要生成可视化图表。
+""",
+            role="user"
+        )
+
+        # Call Router Agent
+        router_response = await st.session_state.router_agent(router_msg)
+        
+        # Extract content from response
+        router_content = extract_agent_content(router_response)
+        
+        # Parse router decision (extract JSON from response)
+        route_decision = parse_router_decision(router_content)
+        
+        # Debug: Show route decision
+        st.info(f"🔍 路由决策: {route_decision['route']} | 原因: {route_decision['reason']}")
+        
+        # Step 2: Route based on decision
+        if route_decision["route"] == "general":
+            # Simple question - use General Agent
+            st.info(f"💬 检测到简单问题：{route_decision['reason']}")
+            
+            general_msg = Msg(
+                name="user",
+                content=f"""用户问题: {user_question}
+
+数据文件路径: {file_path}
+
+请回答用户的问题。
+""",
+                role="user"
+            )
+            
+            # Call General Agent
+            general_response = await st.session_state.general_agent(general_msg)
+            
+            # Extract and clean content
+            general_content = extract_agent_content(general_response)
+            
+            return {
+                'analysis': general_content,
+                'route': 'general',
+                'engineer_log': '',
+                'has_visualization': False,
+                'success': True
+            }
+        
+        else:
+            # Visualization needed - use DataEngineer + BusinessAnalyst
+            st.info(f"📊 需要生成可视化：{route_decision['reason']}")
+            
+            # Step 3: Data Engineer Agent processes data and creates visualization
+            st.info("🔧 数据工程师正在处理数据...")
+
+            engineer_msg = Msg(
+                name="user",
+                content=f"""任务：为以下问题生成可视化
 
 数据文件：{file_path}
 用户问题：{user_question}
@@ -136,55 +353,143 @@ async def run_analysis_pipeline(user_question: str, file_path: str) -> dict:
 
 现在开始执行！
 """,
-            role="user"
-        )
+                role="user"
+            )
 
-        # Call Data Engineer Agent
-        engineer_response = await st.session_state.data_engineer(engineer_msg)
+            # Call Data Engineer Agent
+            engineer_response = await st.session_state.data_engineer(engineer_msg)
 
-        # Extract execution log from engineer's response
-        # The log contains all print() outputs from executed code
-        engineer_log = extract_execution_log(engineer_response)
+            # Extract execution log from engineer's response
+            engineer_log = extract_execution_log(engineer_response)
 
-        # Check if visualization file was created
-        viz_file_path = "./temp/visual_result.html"
-        if not os.path.exists(viz_file_path):
-            return {
-                'analysis': f"**错误**: 数据工程师未能生成可视化文件。\n\n工程师输出:\n{engineer_response.content}",
-                'engineer_log': engineer_log,
-                'success': False
-            }
+            # Check if visualization file was created
+            viz_file_path = "./temp/visual_result.html"
+            if not os.path.exists(viz_file_path):
+                return {
+                    'analysis': f"**错误**: 数据工程师未能生成可视化文件。\n\n工程师输出:\n{engineer_response.content}",
+                    'route': 'visualization',
+                    'engineer_log': engineer_log,
+                    'has_visualization': False,
+                    'success': False
+                }
 
-        # Step 2: Business Analyst Agent analyzes the results
-        st.info("📊 商业分析师正在分析数据...")
+            # Step 4: Business Analyst Agent analyzes the results
+            st.info("📊 商业分析师正在分析数据...")
 
-        analyst_msg = Msg(
-            name="engineer",
-            content=f"""用户问题: {user_question}
+            analyst_msg = Msg(
+                name="engineer",
+                content=f"""用户问题: {user_question}
 
 数据工程师执行日志:
 {engineer_log}
 
 请基于以上信息，为用户生成通俗易懂的商业分析报告。
 """,
-            role="assistant"
-        )
+                role="assistant"
+            )
 
-        # Call Business Analyst Agent
-        analyst_response = await st.session_state.business_analyst(analyst_msg)
+            # Call Business Analyst Agent
+            analyst_response = await st.session_state.business_analyst(analyst_msg)
 
-        return {
-            'analysis': analyst_response.content,
-            'engineer_log': engineer_log,
-            'success': True
-        }
+            # Extract and clean content
+            analyst_content = extract_agent_content(analyst_response)
+
+            return {
+                'analysis': analyst_content,
+                'route': 'visualization',
+                'engineer_log': engineer_log,
+                'has_visualization': True,
+                'success': True
+            }
 
     except Exception as e:
         error_msg = f"分析过程中出现错误:\n\n{str(e)}\n\n{traceback.format_exc()}"
         return {
             'analysis': error_msg,
+            'route': 'error',
             'engineer_log': "",
+            'has_visualization': False,
             'success': False
+        }
+
+
+def parse_router_decision(response_content: str) -> dict:
+    """Parse router agent's decision from response content.
+    
+    Args:
+        response_content (str): Router agent's response
+        
+    Returns:
+        dict: Parsed decision with 'route' and 'reason' keys
+    """
+    try:
+        import json
+        import re
+        
+        # Ensure we have a string
+        if not isinstance(response_content, str):
+            response_content = str(response_content)
+        
+        # Remove markdown code blocks if present
+        content_cleaned = response_content.strip()
+        
+        # Remove ```json and ``` markers
+        if '```json' in content_cleaned:
+            content_cleaned = re.sub(r'```json\s*', '', content_cleaned)
+            content_cleaned = re.sub(r'```\s*$', '', content_cleaned)
+        elif '```' in content_cleaned:
+            content_cleaned = re.sub(r'```\s*', '', content_cleaned)
+        
+        # Try to extract JSON from response
+        # Look for JSON pattern in the response
+        json_pattern = r'\{[^{}]*"route"[^{}]*\}'
+        matches = re.findall(json_pattern, content_cleaned, re.DOTALL)
+        
+        if matches:
+            # Parse the last JSON match (most likely the final decision)
+            for match in reversed(matches):
+                try:
+                    decision = json.loads(match)
+                    
+                    # Validate required keys
+                    if 'route' in decision:
+                        route_value = str(decision['route']).lower().strip()
+                        
+                        # Normalize route value
+                        if route_value in ['general', 'simple', '简单', '简单问题']:
+                            route_value = 'general'
+                        elif route_value in ['visualization', 'visual', 'chart', '可视化', '图表']:
+                            route_value = 'visualization'
+                        
+                        return {
+                            'route': route_value,
+                            'reason': decision.get('reason', '未提供原因')
+                        }
+                except json.JSONDecodeError:
+                    continue
+        
+        # Fallback: keyword-based detection
+        content_lower = response_content.lower()
+        if 'general' in content_lower or '简单问题' in response_content or '不需要' in response_content:
+            return {
+                'route': 'general',
+                'reason': '检测到简单问题（基于关键词）'
+            }
+        else:
+            return {
+                'route': 'visualization',
+                'reason': '需要可视化（默认路由）'
+            }
+    
+    except Exception as e:
+        # Default to visualization on parse error
+        import traceback
+        error_detail = traceback.format_exc()
+        print(f"路由解析错误详情: {error_detail}")  # Debug print
+        
+        return {
+            'route': 'visualization',
+            'reason': f'路由解析失败，默认使用可视化路径（错误：{str(e)}）'
         }
 
 
@@ -317,6 +622,10 @@ def main():
         # Clear chat button
         if st.button("🗑️ 清空对话", use_container_width=True):
             st.session_state.messages = []
+            if st.session_state.router_agent:
+                st.session_state.router_agent.memory.clear()
+            if st.session_state.general_agent:
+                st.session_state.general_agent.memory.clear()
             if st.session_state.data_engineer:
                 st.session_state.data_engineer.memory.clear()
             if st.session_state.business_analyst:
@@ -331,13 +640,19 @@ def main():
         **特点**:
         - 🔒 **隐私安全**: 数据完全本地处理
         - 🎨 **交互式图表**: 基于 ECharts 的动态可视化
-        - 🤖 **AI 驱动**: 双智能体协作分析
+        - 🤖 **智能路由**: 自动识别问题类型，优化响应
         - 💬 **对话式**: 自然语言提问
 
         **技术栈**:
         - AgentScope (多智能体框架)
         - Pyecharts (可视化)
         - Streamlit (Web界面)
+        
+        **智能体架构**:
+        - 🧭 路由Agent: 判断问题类型
+        - 💬 通用Agent: 处理简单问题
+        - 🔧 数据工程师: 生成可视化
+        - 📊 商业分析师: 解读结果
         """)
 
     # Main content area
@@ -363,6 +678,13 @@ def main():
 
         ### 示例问题
 
+        **简单问题（快速回答）**:
+        - "这张表有哪些字段？"
+        - "数据有多少行？"
+        - "总销售额是多少？"
+        - "销售额的平均值是多少？"
+        
+        **复杂分析（生成图表）**:
         - "分析各季度的销售趋势"
         - "对比不同产品类别的销售额"
         - "找出销售额最高的前5个地区"
@@ -397,30 +719,44 @@ def main():
                 ))
 
                 if result['success']:
-                    # Display visualization
-                    viz_file_path = "./temp/visual_result.html"
-                    if os.path.exists(viz_file_path):
-                        st.markdown("### 📊 数据可视化")
-                        with open(viz_file_path, 'r', encoding='utf-8') as f:
-                            html_content = f.read()
-                        st.components.v1.html(html_content, height=600, scrolling=True)
+                    # Check if visualization was generated
+                    if result.get('has_visualization', False):
+                        # Display visualization
+                        viz_file_path = "./temp/visual_result.html"
+                        if os.path.exists(viz_file_path):
+                            st.markdown("### 📊 数据可视化")
+                            with open(viz_file_path, 'r', encoding='utf-8') as f:
+                                html_content = f.read()
+                            st.components.v1.html(html_content, height=600, scrolling=True)
 
-                    # Display analysis
-                    st.markdown("### 📈 分析报告")
-                    st.markdown(f'<div class="analysis-box">{result["analysis"]}</div>',
-                               unsafe_allow_html=True)
+                        # Display analysis
+                        st.markdown("### 📈 分析报告")
+                        st.markdown(f'<div class="analysis-box">{result["analysis"]}</div>',
+                                   unsafe_allow_html=True)
 
-                    # Add assistant message to chat
-                    assistant_message = f"### 📊 数据可视化\n\n已生成交互式图表（请查看上方）\n\n### 📈 分析报告\n\n{result['analysis']}"
-                    st.session_state.messages.append({
-                        "role": "assistant",
-                        "content": assistant_message
-                    })
+                        # Add assistant message to chat
+                        assistant_message = f"### 📊 数据可视化\n\n已生成交互式图表（请查看上方）\n\n### 📈 分析报告\n\n{result['analysis']}"
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": assistant_message
+                        })
 
-                    # Optional: Show engineer log in expander
-                    if result['engineer_log']:
-                        with st.expander("🔍 查看技术日志"):
-                            st.code(result['engineer_log'], language="text")
+                        # Optional: Show engineer log in expander
+                        if result.get('engineer_log'):
+                            with st.expander("🔍 查看技术日志"):
+                                st.code(result['engineer_log'], language="text")
+                    
+                    else:
+                        # Simple question - no visualization
+                        st.markdown("### 💬 回答")
+                        st.markdown(f'<div class="analysis-box">{result["analysis"]}</div>',
+                                   unsafe_allow_html=True)
+
+                        # Add assistant message to chat
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": result['analysis']
+                        })
 
                 else:
                     # Error occurred
