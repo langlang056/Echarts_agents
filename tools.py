@@ -133,6 +133,11 @@ def execute_python_safe(code: str, working_dir: str = "./temp") -> ToolResponse:
         - File deletion (rm, del)
         - Network access (socket, urllib, requests)
     """
+    # Initialize variables for finally block
+    original_dir = os.getcwd()
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    
     try:
         # Security checks - detect dangerous patterns
         dangerous_patterns = [
@@ -160,7 +165,6 @@ def execute_python_safe(code: str, working_dir: str = "./temp") -> ToolResponse:
         os.makedirs(working_dir, exist_ok=True)
 
         # Change to working directory
-        original_dir = os.getcwd()
         os.chdir(working_dir)
 
         # Capture stdout and stderr
@@ -209,6 +213,20 @@ def execute_python_safe(code: str, working_dir: str = "./temp") -> ToolResponse:
             }
         }
 
+        # Dynamically import matplotlib if code contains it
+        if 'matplotlib' in code or 'plt.' in code or 'plt,' in code:
+            try:
+                import matplotlib
+                matplotlib.use('Agg')  # 使用非交互式后端
+                import matplotlib.pyplot as plt
+                exec_globals['matplotlib'] = matplotlib
+                exec_globals['plt'] = plt
+            except ImportError:
+                return ToolResponse(
+                    content=[{"type": "text", "text": "Error: matplotlib is not installed. Please install it first:\npip install matplotlib"}],
+                    metadata={"error_type": "ImportError"}
+                )
+
         # Dynamically import pyecharts if code contains it
         if 'pyecharts' in code or 'echarts' in code.lower():
             try:
@@ -256,8 +274,6 @@ def execute_python_safe(code: str, working_dir: str = "./temp") -> ToolResponse:
                 )
 
         # Redirect stdout and stderr
-        old_stdout = sys.stdout
-        old_stderr = sys.stderr
         sys.stdout = stdout_capture
         sys.stderr = stderr_capture
 
@@ -330,6 +346,146 @@ def execute_python_safe(code: str, working_dir: str = "./temp") -> ToolResponse:
         # Ensure stdout/stderr are restored
         sys.stdout = old_stdout
         sys.stderr = old_stderr
+
+
+def validate_chart_output(
+    engine: str = "matplotlib",
+    file_path: str = None,
+    min_size_kb: float = 1.0
+) -> ToolResponse:
+    """Validate that the chart visualization file was successfully generated.
+
+    This tool checks for both Matplotlib (PNG) and Pyecharts (HTML) outputs:
+    - File exists at the specified path
+    - File size is above minimum threshold
+    - File contains valid content markers
+
+    Args:
+        engine (str): Chart engine - "matplotlib" or "pyecharts". Defaults to "matplotlib"
+        file_path (str): Path to the expected file. If None, defaults based on engine:
+                        - matplotlib: "./temp/visual_result.png"
+                        - pyecharts: "./temp/visual_result.html"
+        min_size_kb (float): Minimum file size in KB. Defaults to 1.0 KB
+
+    Returns:
+        ToolResponse: Validation result with file metadata
+    """
+    try:
+        # Determine default file path based on engine
+        if file_path is None:
+            if engine == "matplotlib":
+                file_path = "./temp/visual_result.png"
+            else:
+                file_path = "./temp/visual_result.html"
+
+        # Check if file exists
+        if not os.path.exists(file_path):
+            if engine == "matplotlib":
+                hint = f"Please ensure your code saves the chart using plt.savefig('{file_path}')"
+            else:
+                hint = f"Please ensure your code saves the chart using .render('{file_path}')"
+            
+            return ToolResponse(
+                content=[{"type": "text", "text": f"Validation Failed: File not found at {file_path}\n{hint}"}],
+                metadata={"error_type": "FileNotFound", "expected_path": file_path, "engine": engine}
+            )
+
+        # Check file size
+        file_size_bytes = os.path.getsize(file_path)
+        file_size_kb = file_size_bytes / 1024
+
+        if file_size_kb < min_size_kb:
+            return ToolResponse(
+                content=[{"type": "text", "text": f"Validation Failed: File is too small ({file_size_kb:.2f} KB)\n"
+                       f"Expected at least {min_size_kb} KB. The file may be empty or incomplete."}],
+                metadata={
+                    "error_type": "FileTooSmall",
+                    "size_kb": file_size_kb,
+                    "min_size_kb": min_size_kb,
+                    "engine": engine
+                }
+            )
+
+        # Validate based on engine type
+        if engine == "matplotlib":
+            # PNG validation - check PNG file header magic bytes
+            with open(file_path, 'rb') as f:
+                header = f.read(8)
+            
+            # PNG magic bytes: 89 50 4E 47 0D 0A 1A 0A
+            png_signature = b'\x89PNG\r\n\x1a\n'
+            is_valid_png = header == png_signature
+
+            if not is_valid_png:
+                return ToolResponse(
+                    content=[{"type": "text", "text": f"Validation Warning: File exists but doesn't appear to be a valid PNG image.\n"
+                           f"Size: {file_size_kb:.2f} KB\n"
+                           f"This may not be a valid visualization file."}],
+                    metadata={
+                        "error_type": "InvalidPNG",
+                        "size_kb": file_size_kb,
+                        "engine": engine
+                    }
+                )
+
+            validation_msg = f"✓ Validation Passed (Matplotlib PNG)\n\n"
+            validation_msg += f"File: {file_path}\n"
+            validation_msg += f"Size: {file_size_kb:.2f} KB\n"
+            validation_msg += f"Format: PNG Image ✓\n"
+
+            return ToolResponse(
+                content=[{"type": "text", "text": validation_msg}],
+                metadata={
+                    "file_path": file_path,
+                    "size_kb": file_size_kb,
+                    "is_valid_png": True,
+                    "engine": engine
+                }
+            )
+        
+        else:  # pyecharts HTML
+            # Read file content for validation
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            # Basic HTML validation
+            has_html = '<html' in content.lower()
+            has_echarts = 'echarts' in content.lower()
+
+            if not has_html:
+                return ToolResponse(
+                    content=[{"type": "text", "text": f"Validation Warning: File exists but doesn't contain valid HTML structure.\n"
+                           f"Size: {file_size_kb:.2f} KB\n"
+                           f"This may not be a valid visualization file."}],
+                    metadata={
+                        "error_type": "InvalidHTML",
+                        "size_kb": file_size_kb,
+                        "engine": engine
+                    }
+                )
+
+            validation_msg = f"✓ Validation Passed (Pyecharts HTML)\n\n"
+            validation_msg += f"File: {file_path}\n"
+            validation_msg += f"Size: {file_size_kb:.2f} KB\n"
+            validation_msg += f"HTML Structure: {'✓' if has_html else '✗'}\n"
+            validation_msg += f"ECharts Content: {'✓' if has_echarts else '✗'}\n"
+
+            return ToolResponse(
+                content=[{"type": "text", "text": validation_msg}],
+                metadata={
+                    "file_path": file_path,
+                    "size_kb": file_size_kb,
+                    "has_html": has_html,
+                    "has_echarts": has_echarts,
+                    "engine": engine
+                }
+            )
+
+    except Exception as e:
+        return ToolResponse(
+            content=[{"type": "text", "text": f"Validation Error: {str(e)}\n{traceback.format_exc()}"}],
+            metadata={"error_type": type(e).__name__, "engine": engine}
+        )
 
 
 def validate_html_output(
@@ -422,5 +578,6 @@ def validate_html_output(
 __all__ = [
     'read_data_schema',
     'execute_python_safe',
-    'validate_html_output'
+    'validate_chart_output',
+    'validate_html_output'  # 保留兼容性
 ]

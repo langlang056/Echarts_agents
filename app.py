@@ -299,8 +299,12 @@ async def run_analysis_pipeline(user_question: str, file_path: str) -> dict:
         # Parse router decision (extract JSON from response)
         route_decision = parse_router_decision(router_content)
         
+        # Get engine type
+        engine = route_decision.get('engine', 'matplotlib')
+        
         # Debug: Show route decision
-        st.info(f"🔍 路由决策: {route_decision['route']} | 原因: {route_decision['reason']}")
+        engine_label = "Matplotlib (静态)" if engine == "matplotlib" else "Pyecharts (交互)"
+        st.info(f"🔍 路由决策: {route_decision['route']} | 图表引擎: {engine_label} | 原因: {route_decision['reason']}")
         
         # Step 2: Route based on decision
         if route_decision["route"] == "general":
@@ -334,10 +338,19 @@ async def run_analysis_pipeline(user_question: str, file_path: str) -> dict:
         
         else:
             # Visualization needed - use DataEngineer + BusinessAnalyst
-            st.info(f"📊 需要生成可视化：{route_decision['reason']}")
+            engine_label = "Matplotlib (静态)" if engine == "matplotlib" else "Pyecharts (交互)"
+            st.info(f"📊 需要生成可视化：{route_decision['reason']} | 引擎: {engine_label}")
             
             # Step 3: Data Engineer Agent processes data and creates visualization
             st.info("🔧 数据工程师正在处理数据...")
+
+            # Determine output file based on engine
+            if engine == "matplotlib":
+                output_file = "./temp/visual_result.png"
+                validate_hint = "validate_chart_output(engine='matplotlib')"
+            else:
+                output_file = "./temp/visual_result.html"
+                validate_hint = "validate_chart_output(engine='pyecharts')"
 
             engineer_msg = Msg(
                 name="user",
@@ -345,11 +358,12 @@ async def run_analysis_pipeline(user_question: str, file_path: str) -> dict:
 
 数据文件：{file_path}
 用户问题：{user_question}
+图表引擎：{engine}
 
 执行步骤（立即执行，不要解释）：
 1. read_data_schema - 读取数据结构
-2. execute_python_safe - 生成图表并保存到 ./temp/visual_result.html
-3. validate_html_output - 验证文件
+2. execute_python_safe - 使用 {engine} 生成图表并保存到 {output_file}
+3. {validate_hint} - 验证文件
 
 现在开始执行！
 """,
@@ -363,11 +377,12 @@ async def run_analysis_pipeline(user_question: str, file_path: str) -> dict:
             engineer_log = extract_execution_log(engineer_response)
 
             # Check if visualization file was created
-            viz_file_path = "./temp/visual_result.html"
+            viz_file_path = output_file
             if not os.path.exists(viz_file_path):
                 return {
                     'analysis': f"**错误**: 数据工程师未能生成可视化文件。\n\n工程师输出:\n{engineer_response.content}",
                     'route': 'visualization',
+                    'engine': engine,
                     'engineer_log': engineer_log,
                     'has_visualization': False,
                     'success': False
@@ -397,6 +412,8 @@ async def run_analysis_pipeline(user_question: str, file_path: str) -> dict:
             return {
                 'analysis': analyst_content,
                 'route': 'visualization',
+                'engine': engine,
+                'viz_file_path': viz_file_path,
                 'engineer_log': engineer_log,
                 'has_visualization': True,
                 'success': True
@@ -407,6 +424,7 @@ async def run_analysis_pipeline(user_question: str, file_path: str) -> dict:
         return {
             'analysis': error_msg,
             'route': 'error',
+            'engine': 'matplotlib',
             'engineer_log': "",
             'has_visualization': False,
             'success': False
@@ -420,7 +438,7 @@ def parse_router_decision(response_content: str) -> dict:
         response_content (str): Router agent's response
         
     Returns:
-        dict: Parsed decision with 'route' and 'reason' keys
+        dict: Parsed decision with 'route', 'engine', and 'reason' keys
     """
     try:
         import json
@@ -461,8 +479,14 @@ def parse_router_decision(response_content: str) -> dict:
                         elif route_value in ['visualization', 'visual', 'chart', '可视化', '图表']:
                             route_value = 'visualization'
                         
+                        # Parse engine field (default to matplotlib)
+                        engine_value = str(decision.get('engine', 'matplotlib')).lower().strip()
+                        if engine_value not in ['matplotlib', 'pyecharts']:
+                            engine_value = 'matplotlib'
+                        
                         return {
                             'route': route_value,
+                            'engine': engine_value,
                             'reason': decision.get('reason', '未提供原因')
                         }
                 except json.JSONDecodeError:
@@ -473,11 +497,18 @@ def parse_router_decision(response_content: str) -> dict:
         if 'general' in content_lower or '简单问题' in response_content or '不需要' in response_content:
             return {
                 'route': 'general',
+                'engine': 'matplotlib',
                 'reason': '检测到简单问题（基于关键词）'
             }
         else:
+            # Check for interactive chart request
+            engine = 'matplotlib'
+            if '交互' in response_content or 'interactive' in content_lower or 'pyecharts' in content_lower:
+                engine = 'pyecharts'
+            
             return {
                 'route': 'visualization',
+                'engine': engine,
                 'reason': '需要可视化（默认路由）'
             }
     
@@ -489,6 +520,7 @@ def parse_router_decision(response_content: str) -> dict:
         
         return {
             'route': 'visualization',
+            'engine': 'matplotlib',
             'reason': f'路由解析失败，默认使用可视化路径（错误：{str(e)}）'
         }
 
@@ -721,13 +753,22 @@ def main():
                 if result['success']:
                     # Check if visualization was generated
                     if result.get('has_visualization', False):
-                        # Display visualization
-                        viz_file_path = "./temp/visual_result.html"
+                        # Get engine and file path
+                        engine = result.get('engine', 'matplotlib')
+                        viz_file_path = result.get('viz_file_path', './temp/visual_result.png')
+                        
+                        # Display visualization based on engine type
                         if os.path.exists(viz_file_path):
                             st.markdown("### 📊 数据可视化")
-                            with open(viz_file_path, 'r', encoding='utf-8') as f:
-                                html_content = f.read()
-                            st.components.v1.html(html_content, height=600, scrolling=True)
+                            
+                            if engine == "matplotlib":
+                                # Display PNG image
+                                st.image(viz_file_path, use_container_width=True)
+                            else:
+                                # Display interactive HTML chart
+                                with open(viz_file_path, 'r', encoding='utf-8') as f:
+                                    html_content = f.read()
+                                st.components.v1.html(html_content, height=600, scrolling=True)
 
                         # Display analysis
                         st.markdown("### 📈 分析报告")
@@ -735,7 +776,8 @@ def main():
                                    unsafe_allow_html=True)
 
                         # Add assistant message to chat
-                        assistant_message = f"### 📊 数据可视化\n\n已生成交互式图表（请查看上方）\n\n### 📈 分析报告\n\n{result['analysis']}"
+                        chart_type = "静态图表" if engine == "matplotlib" else "交互式图表"
+                        assistant_message = f"### 📊 数据可视化\n\n已生成{chart_type}（请查看上方）\n\n### 📈 分析报告\n\n{result['analysis']}"
                         st.session_state.messages.append({
                             "role": "assistant",
                             "content": assistant_message
